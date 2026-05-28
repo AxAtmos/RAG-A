@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业级 RAG 极端高鲁棒性四层防线架构设计白皮书</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .spec-table th, .spec-table td { border-bottom: 1px solid #e2e8f0; padding: 1rem; }
+        .spec-table tr:last-child td { border-bottom: none; }
+    </style>
+</head>
+<body class="bg-[#f8fafc] text-slate-800 antialiased leading-relaxed">
+
+    <header class="bg-slate-900 text-slate-100 shadow-md sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-base font-bold tracking-wider flex items-center gap-2">
+                <span class="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                Enterprise RAG Fault-Tolerant & Adaptive Architecture Blueprint
+            </h1>
+            <span class="bg-emerald-600 text-white text-[10px] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-widest">V2.0 HIGH-AVAILABILITY</span>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-12">
+        
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <div class="border-b border-slate-200 pb-6 mb-6">
+                <span class="text-xs font-bold uppercase text-emerald-600 tracking-widest block mb-2">Adaptive Information Retrieval Specification</span>
+                <h2 class="text-3xl font-black text-slate-900 tracking-tight">企业知识库“宏观/微观提问”自适应四层防线重构设计案</h2>
+            </div>
+            <p class="text-slate-600 text-sm leading-relaxed">
+                本设计白皮书聚焦于破解企业级 RAG 落地中的致命痛点——<span class="font-bold text-slate-900">“检索不足（Under-retrieval）与宏观宏大提问残缺”</span>。
+                本案彻底抛弃了锁死固定召回数量的传统硬件妥协思路，全链路重构为由 <span class="font-bold text-slate-900">“Query 多意图拓宽、Cross-Encoder 动态分值滑窗、父子块语义联动关联、Agent 反思二次重试”</span> 组成的自适应四层安全隔离防御体系，确保系统在面临任何极端复杂提问时均具备工业级的强鲁棒性与高置信度。
+            </p>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <h3 class="text-lg font-bold text-slate-900 mb-4 border-l-4 border-emerald-600 pl-3">1. 自适应四层防线深度流转拓扑图 (Four-Layer Defense Topology)</h3>
+            <p class="text-slate-500 text-xs mb-6">注：下流转图严格遵循 Mermaid v10 最新语法标准。当任意层级检测到“知识不充分”时，全自动激活右侧的异步补偿、自动降级与重试机制。</p>
+            
+            <div class="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow-inner overflow-x-auto">
+                <pre class="mermaid text-center bg-transparent">
+graph TD
+    %% 外部提问进入
+    UserQuery([用户宏观/微观提问]) --> FA_Gate[FastAPI 网关入口]
+
+    %% 第一层防线：Query 拓宽
+    subgraph Layer1[【第一层防线：意图拓宽】]
+        FA_Gate -->|调用后台轻量 LLM| QueryRewriter[Query Fusion: 衍生4组近义提问]
+        QueryRewriter -->|多线程并行并发查询| QdrantSearch[Qdrant 混合多维向量检索]
+    end
+
+    %% 第二层防线：父子块关联
+    subgraph Layer2[【第二层防线：父子块级联】]
+        QdrantSearch -->|捞回低噪音子块 Child_Chunks| ParentLookup{校验 parent_id 是否存在}
+        ParentLookup -->|存在外键关联| SQL_Fetch[SQLAlchemy 级联捞出大文本父块/章节摘要]
+        ParentLookup -->|不存在外键| DirectChunk[保持原子细粒度子块]
+    end
+
+    %% 第三层防线：动态置信度精排
+    subgraph Layer3[【第三层防线：动态阈值精排】]
+        SQL_Fetch & DirectChunk -->|合并送入隔离的模型网关| CrossEncoder[Cross-Encoder 交叉编码器算分]
+        CrossEncoder -->|设定硬红线 Score >= 0.65| ThresholdCheck{分值动态数量过滤器}
+        
+        ThresholdCheck -->|大量硬核高分块| FlexWindow[动态打破5个限制: 饱满扩容塞入]
+        ThresholdCheck -->|高分块极少/边缘化| RestrictWindow[动态收缩裁剪: 只取高分块去噪]
+    end
+
+    %% 第四层防线：Agent 反思审计与自动二次重试机制
+    subgraph Layer4[【第四层防线：Agent反思重试】]
+        FlexWindow & RestrictWindow -->|拼装硬核上下文提示词| Ollama_Inference[Ollama 核心推理引擎]
+        Ollama_Inference -->|前置 Buffer 检测逻辑| AgentAudit{模型反思: 资料是否完备?}
+        
+        %% 自动降级与补偿回路
+        AgentAudit -->|缺失核心参数/判定无法回答| InsufficientFlag([吐出 INSUFFICIENT_INFO 状态标签])
+        InsufficientFlag -->|拦截流/触发降级补偿机制| RetryLoop[二次自动重试: 粗筛范围扩大至 Top-50 / 放宽精排]
+        RetryLoop -->|重新注入检索网络| QdrantSearch
+        
+        AgentAudit -->|资料高度完备/自信回答| OutStream[Stream=True 正常流式吐字]
+    end
+
+    OutStream -->|前端打字机无感渲染| UserQuery
+
+    %% 节点美化规范
+    style Layer1 fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px
+    style Layer2 fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px
+    style Layer3 fill:#e2e8f0,stroke:#64748b,stroke-width:2px
+    style Layer4 fill:#ecfdf5,stroke:#a7f3d0,stroke-width:2px
+    style UserQuery fill:#38bdf8,stroke:#0284c7,stroke-width:2px
+                </pre>
+            </div>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <h3 class="text-lg font-bold text-slate-900 mb-6 border-l-4 border-emerald-600 pl-3">2. 整合四层防线必须预留的系统级“工程暗桩”（Required Groundwork）</h3>
+            
+            <div class="space-y-8 text-sm">
+                <div class="flex items-start gap-4">
+                    <div class="bg-slate-900 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">01</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">第一层预留：FastAPI 并发去重锁与倒数排名融合（RRF）空间</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            <strong>物理原理：</strong> 当用户的原始提问被改写拓宽为 4 个衍生句进行多线程并行检索时，Qdrant 向量库在同一毫秒内会返回 4 组完全不同的 Top-20 结果集（共 80 个 Chunk）。这些结果之间必然存在大量的物理重复和排序冲突。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>底层预留：</strong> 必须在 FastAPI 网关的后台操作模块中预留标准 <code>asyncio.gather</code> 协程并发锁，并且在数据清洗层预留标准的 <strong>RRF (Reciprocal Rank Fusion) 倒数排名融合算法函数空间</strong>。确保这 80 个块能在内存中以极低的 CPU 开销完成交叉去重、加权重新排序，随后干净地递交给第二层。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-slate-900 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">02</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">第二层预留：SQLAlchemy 关系表级联与 Qdrant Payload 的 <code>parent_id</code> 物理外键</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            <strong>物理原理：</strong> 解决“微观小块找得准、宏观大块信息全”的物理矛盾。如果只切大块，检索噪音极其严重；如果只切小块，一旦遇到宏观提问，小块拼凑出来的信息就像盲人摸象、残缺不全。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>底层预留：</strong> 
+                            1. **PostgreSQL 端**：在 <code>chunks</code> 表中必须强制预留 <code>parent_id (VARCHAR/UUID, nullable=True)</code> 字段，级联指向存储文章大段落或全章摘要的 <code>parent_documents</code> 表。<br>
+                            2. **Qdrant 端**：在写入的点（Points）的 Payload 字典结构中，必须固定预留 <code>"parent_id"</code> 键。这使得 Cross-Encoder 可以在不感知大文本的情况下对子块精准打分，一旦子块中榜，<code>sync_manager</code> 能够瞬间顺藤摸瓜，用结构化的 Postgres 父块大文本或章节 Summary 动态替换掉子块，完美喂饱大模型。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-slate-900 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">03</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">第三层预留：Pydantic 动态阈值 Model 与 Cross-Encoder 绝对值透传</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            <strong>物理原理：</strong> “20选5”在传统粗暴的 RAG 里是个死数字。但在高鲁棒系统中，必须转变为由 Cross-Encoder 真实概率得分控制的动态滑窗。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>底层预留：</strong> 必须在请求和配置的 Pydantic 模型（如 <code>class RerankSettings(BaseModel)</code>）中预留 <code>score_threshold: float = 0.65</code> 和 `max_vram_token_limit` 刚性限制。重排服务返回的绝对置信度分值（0~1）必须原封不动透传给过滤器函数：如果有 15 个块得分大于 0.65，且总 Token 未超出显存红线，系统自动扩容全量带走（解决不够回答的问题）；若只有 1 个块及格，则执行严苛去噪、绝不多带。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-slate-900 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">04</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">第四层预留：FastAPI 流式缓冲区拦截与二次重试循环（Retry-Loop）状态机</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            <strong>物理原理：</strong> 这是整个系统最后也是最强韧的一道容错底线。大模型在阅读了重排文本后，如果以其原生智能判定“这些资料确实缺乏核心因果关系、数据不足以严谨回答”，则必须触发自适应补偿，而不是强行胡编乱造。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>底层预留：</strong> FastAPI 在读取 Ollama 的流式响应时，代码层绝不能直接把字吐给前端。必须在异步迭代器中预留一个 **“前置字符缓冲区（Token Buffer Window）”**（约 20 个 Tokens）。在 System Prompt 中锁死：“若资料不足，必须首先吐出 <code>【INSUFFICIENT_INFO】</code> 标签”。一旦缓冲区检测到该魔术字符串，FastAPI 立即实施**流拦截**，在后台将 Qdrant 粗筛的 <code>top_k</code> 从 20 强行开闸放大到 50，放宽重排分值至 0.5，自动触发 **二次检索补偿循环（Retry-Loop）**。只有当二次重试依然判定缺失时，才降级输出友好提示或提示用户追加补充，全流程用户完全无感知。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60">
+            <h3 class="text-lg font-bold text-slate-900 mb-4 border-l-4 border-emerald-600 pl-3">3. 通用高鲁棒性四层防线核心参数配置白皮书 (Parameter Blueprints)</h3>
+            
+            <div class="overflow-x-auto mt-6">
+                <table class="w-full text-left border-collapse text-sm spec-table">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200">
+                            <th class="text-slate-700 font-black w-1/4">数据与防线层级</th>
+                            <th class="text-slate-700 font-black w-1/4">标准工业推荐参数</th>
+                            <th class="text-slate-700 font-black w-2/4">自适应控损机制与底层物理设计原理</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-slate-600">
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">第一层：意图拓宽层<br>(Query Fusion)</td>
+                            <td class="font-mono text-emerald-600 text-xs">expanded_queries: 4<br>rrf_constant: 60<br>parallel_workers: 4</td>
+                            <td class="p-4">将原始问题解构并派生出 4 组涵盖不同侧重点的近义句，利用多线程同时轰炸向量库。采用标准 RRF 倒数排名融合算法去重聚合，大幅提升长文本、宏观提问的“首轮知识召回率”。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">第二层：父子级联层<br>(Parent-Child Schema)</td>
+                            <td class="font-mono text-emerald-600 text-xs">child_chunk_size: 300 字<br>parent_chunk_size: 2000 字<br>join_strategy: lazy_load</td>
+                            <td class="p-4">300 字子块负责在 Qdrant 中死守“高相似度、低噪音”的纯净度；一旦被 Cross-Encoder 委以高分，利用 PostgreSQL 的 <code>parent_id</code> 瞬间映射出包含完整技术上下文或全章大纲摘要的 2000 字父块进行内容替换，完美撑大生成层的信息量。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">第三层：动态精排层<br>(Cross-Encoder Fit)</td>
+                            <td class="font-mono text-emerald-600 text-xs">score_hard_line: >= 0.65<br>elastic_min_k: 2<br>elastic_max_k: 12</td>
+                            <td class="p-4">彻底废弃死板的固定的 5 个块限制。在 0.65 置信度硬红线之上，若高分干货密集则放宽弹性滑窗至 12 个块，全部打包带走喂饱 LLM；若皆是边缘垃圾，则动态收缩至最极致的 2 个块，严防死守噪音对大模型的干扰。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">第四层：反思补偿层<br>(Agent Retry-Loop)</td>
+                            <td class="font-mono text-emerald-600 text-xs">buffer_tokens: 20<br>max_retry_attempts: 2<br>secondary_top_k: 50</td>
+                            <td class="p-4">FastAPI 异步迭代器前置预留 20 个字符缓冲区，专门捕捉大模型的 <code>【INSUFFICIENT_INFO】</code> 异常标签。一旦捕获立即拦截阻断，在后端无缝启动二次扩大检索循环，将 Qdrant 广度瞬间拉开到 Top-50 执行降级补偿，将系统的召回抗风险能力拉到极致。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-8 bg-amber-50 border border-amber-200 rounded-xl p-6 flex items-start gap-4">
+                <span class="text-amber-600 text-xl font-black">⚙️</span>
+                <div class="text-amber-950 text-xs leading-relaxed">
+                    <strong>自适应动态弹性滑窗下的显存刚性防爆红线（Dynamic VRAM Protection）：</strong> <br>
+                    由于在解决“不够回答”时，第三层防线允许将 Chunk 数量从 5 个动态暴增到 12 个（大文本父块级联），这会导致单用户动态 <strong>KV Cache 的显存开销在瞬时呈现翻倍式的阶跃</strong>。为了防止极端多用户同时触发宏观提问导致物理显卡瞬间溢出（OOM）挂起，后端 FastAPI 的中间件必须预留并强制绑定以下刚性熔断公式：<br>
+                    <span class="font-mono block bg-white/70 p-3 rounded-lg my-2 text-center font-bold text-amber-800 border border-amber-100">
+                        当前可用安全动态通道数 = [显卡总物理显存 - 静态模型总计常驻占用] / [单用户动态最大硬核弹性滑窗 Token 占用 (12个父块约 4.8G)]
+                    </span>
+                    在系统开发时，必须在 FastAPI 初始化中强制注册一个全局异步计算计数器（Concurrency Global Token Counter），一旦当前线上正在推理的动态总 Token 水位逼近服务器物理上限的 85%，自适应防线必须立即对后续请求启动<strong>强制降级硬卡截断（Force Token Clipping）</strong>，将弹性滑窗强行压回标准 Top-4，牺牲微小的宏观全面性，死守整机硬件生态的绝对永续运行。
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-slate-100 text-center py-8 text-xs text-slate-500 border-t border-slate-200 mt-12">
+        <p>© 2026 High-Availability AI Knowledge Base Systems Infrastructure Group. Confidential Technical Specification.</p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.run();
+        });
+    </script>
+</body>
+</html>

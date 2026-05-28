@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 系统名词解释与FAQ手册</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        .spec-table th, .spec-table td { border-bottom: 1px solid #e2e8f0; padding: 0.75rem 1rem; }
+        .spec-table tr:last-child td { border-bottom: none; }
+        .qa-card { border-left: 3px solid #6366f1; }
+        .question-badge { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+        .layer-tag { font-size: 10px; letter-spacing: 0.05em; }
+    </style>
+</head>
+<body class="bg-[#f4f6f9] text-slate-900 antialiased leading-relaxed">
+
+    <header class="bg-slate-800 text-slate-200 border-b border-slate-700 shadow-sm sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-6 py-3 flex justify-between items-center">
+            <h1 class="text-sm font-mono tracking-tight flex items-center gap-2">
+                [FAQ_HANDBOOK] RAG 名词解释与FAQ手册
+            </h1>
+            <span class="bg-slate-700 text-slate-300 text-[11px] px-2 py-0.5 rounded font-mono border border-slate-600">INTERNAL USE</span>
+        </div>
+    </header>
+
+    <nav class="bg-white border-b border-slate-200 sticky top-[44px] z-40">
+        <div class="max-w-6xl mx-auto px-6 py-2 flex gap-4 text-xs font-mono text-slate-500 overflow-x-auto">
+            <a href="#glossary" class="hover:text-indigo-600 whitespace-nowrap">名词解释</a>
+            <span class="text-slate-300">|</span>
+            <a href="#l1" class="hover:text-indigo-600 whitespace-nowrap">L1 查询拓宽</a>
+            <span class="text-slate-300">|</span>
+            <a href="#l2" class="hover:text-indigo-600 whitespace-nowrap">L2 父子级联</a>
+            <span class="text-slate-300">|</span>
+            <a href="#l3" class="hover:text-indigo-600 whitespace-nowrap">L3 精排滑窗</a>
+            <span class="text-slate-300">|</span>
+            <a href="#l4" class="hover:text-indigo-600 whitespace-nowrap">L4 流拦截重试</a>
+            <span class="text-slate-300">|</span>
+            <a href="#production" class="hover:text-indigo-600 whitespace-nowrap">生产配置</a>
+            <span class="text-slate-300">|</span>
+            <a href="#architecture" class="hover:text-indigo-600 whitespace-nowrap">架构整体</a>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-6 py-8">
+
+        <!-- ==================== 名词解释 ==================== -->
+        <section id="glossary" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="bg-indigo-600 text-white text-xs px-2 py-1 rounded">PART 1</span>
+                名词解释 / Glossary
+            </h2>
+
+            <h3 class="text-sm font-bold text-slate-800 font-mono mb-3 mt-2">核心概念</h3>
+            <div class="overflow-x-auto mb-6">
+                <table class="w-full text-left border-collapse text-xs spec-table">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 font-mono text-slate-700">
+                            <th class="w-1/5 font-bold">名词</th>
+                            <th class="font-bold">解释</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-slate-600">
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">RAG</td>
+                            <td><strong>Retrieval-Augmented Generation（检索增强生成）</strong>。先从知识库中检索相关文档片段，再将其作为上下文喂给大模型生成回答。解决大模型"幻觉"和知识过时问题。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Query Fusion</td>
+                            <td><strong>查询拓宽 / 改写</strong>。把用户的一条原始问题，用 LLM 改写成 4 组语义相近但表述不同的近义句，再并行去检索。目的是扩大召回面，避免一种问法漏掉相关文档。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Top-K</td>
+                            <td>向量检索时返回的最相似文档数量。Top-5 就是返回最相似的 5 条，Top-50 就是返回 50 条。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">HNSW</td>
+                            <td><strong>Hierarchical Navigable Small World</strong>。Qdrant 向量数据库使用的近似最近邻索引算法。在高维空间中快速找到与查询向量最相似的文档，速度比暴力搜索快几个数量级。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Payload 级联过滤</td>
+                            <td>Qdrant 中的 Payload 相当于每条向量记录附带的元数据字段。级联过滤指在向量相似度搜索的同时，用这些元数据条件（如 parent_id）做过滤筛选。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Cross-Encoder</td>
+                            <td><strong>交叉编码器</strong>。一种精排模型。与向量检索的"双塔"模型不同，它把 query 和文档拼在一起输入同一个模型打分，精度更高但速度更慢，所以只用于对粗筛结果做精排。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">置信度</td>
+                            <td><strong>Confidence Score</strong>。Cross-Encoder 给 query-document 对打出的相关性分数，范围通常 0~1。分数越高表示越相关。本文用 0.65 作为硬阈值红线。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">动态滑窗</td>
+                            <td><strong>Elastic Sliding Window</strong>。不用固定的 Top-K，而是根据得分分布动态调整返回文档数：高分文档多就扩容到 12 个，低分文档多就缩减到 2 个。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">父块 / 子块</td>
+                            <td><strong>Parent / Child Chunk</strong>。父子分块策略。子块是 300 字左右的高聚焦小段落，用于精准向量匹配；父块是 2000 字左右的完整章节，用于给 LLM 提供完整上下文。通过外键关联。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">外键级联</td>
+                            <td><strong>Foreign Key Cascade</strong>。数据库中外键建立的父子关系。检索命中子块后，通过 parent_id 外键回溯拿到完整父块文本，补充宏观上下文。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 class="text-sm font-bold text-slate-800 font-mono mb-3 mt-2">技术术语</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-xs spec-table">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 font-mono text-slate-700">
+                            <th class="w-1/5 font-bold">名词</th>
+                            <th class="font-bold">解释</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-slate-600">
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">SSE</td>
+                            <td><strong>Server-Sent Events（服务端推送事件）</strong>协议。LLM 逐字生成时，通过 SSE 流式推送给前端，用户不用等全部生成完就能看到输出。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Token Buffer Window</td>
+                            <td><strong>Token 缓冲区</strong>。LLM 流式输出时，先在内存中攒前 20 个 Token（约 100 字符），检查其中是否包含特定标记，再决定是正常输出还是触发重试。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">INSUFFICIENT_INFO</td>
+                            <td><strong>信息不足标记</strong>。大模型在生成回答时，如果判断检索到的上下文不足以回答问题，会主动输出这个标记。系统捕获后触发重试，扩大检索范围。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">KV Cache</td>
+                            <td>大模型推理时缓存的中间计算结果（Key-Value 对）。上下文越长、并发越多，KV Cache 显存占用越大。是 GPU 显存的主要消耗者。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">TTFT</td>
+                            <td><strong>Time To First Token（首字返回延迟）</strong>。从用户发问到收到第一个生成 Token 的时间。关闭思考链可以显著降低这个延迟。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Semaphore</td>
+                            <td><strong>信号量</strong>。并发控制机制。限制同时访问 GPU 的请求数量，防止显存溢出导致服务崩溃。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">HA</td>
+                            <td><strong>High Availability（高可用性）</strong>。系统在部分组件故障时仍能持续提供服务的能力。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">RBAC</td>
+                            <td><strong>Role-Based Access Control（基于角色的访问控制）</strong>。通过 security_level 字段控制不同用户能访问哪些文档。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">Force Token Clipping</td>
+                            <td><strong>强制截断补偿</strong>。显存接近上限时，系统自动把弹性滑窗上限从 12 压回 4，牺牲部分回答完整性来保证服务不崩。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 whitespace-nowrap">物理隔离部署</td>
+                            <td>Cross-Encoder 精排模型单独部署在独立的 GPU 实例上，与主推理引擎隔离，避免互相抢占资源。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ==================== L1 问答 ==================== -->
+        <section id="l1" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="question-badge text-white text-xs px-2 py-1 rounded layer-tag">L1</span>
+                第一层：Query Fusion 并行拓宽
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要改写成 4 组近义句？直接搜不行吗？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">用户的提问方式千差万别。比如问"怎么提升转化率"，但文档里写的是"提高成交率的方法"。只用原始问法搜索，向量相似度可能不够高，就会漏掉这篇文档。改写成多种表述（"如何提高成交率""提升销售转化的方法"等）并行检索，可以显著提高召回率。这是解决 <strong>Under-retrieval（检索不足）</strong>的第一道防线。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么是 4 组而不是 2 组或 10 组？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">2 组覆盖面不够，10 组会显著增加延迟和向量库查询压力。4 组是在召回率和系统负载之间的工程平衡点。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== L2 问答 ==================== -->
+        <section id="l2" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="question-badge text-white text-xs px-2 py-1 rounded layer-tag">L2</span>
+                第二层：父子块外键级联
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要分父块和子块？直接用一个大块不行吗？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">这是经典的 <strong>"精度 vs 上下文"矛盾</strong>。大块（如 2000 字）作为向量检索的单元，语义太宽泛，匹配精度差；小块（300 字）语义聚焦，匹配精准，但缺乏上下文，LLM 看到一个孤立片段可能无法正确理解。所以用小块去精准检索，命中后再通过外键拉回大块给 LLM 补充上下文，两全其美。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么用 SQL 数据库存父块，而不直接放向量数据库？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">SQL 数据库（PostgreSQL）擅长结构化查询、事务一致性、外键约束。父块与子块的级联关系用 SQL 的外键管理更可靠。向量数据库（Qdrant）擅长高维相似度搜索，两者各司其职，解耦存储。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么 SQL 不存原始文件（PDF/DOCX），只存路径？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">大对象（BLOB）存数据库会导致：查询慢、备份膨胀、并发锁竞争。存路径指向 SSD 或 MinIO，需要时按需读取，数据库只做索引和溯源。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== L3 问答 ==================== -->
+        <section id="l3" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="question-badge text-white text-xs px-2 py-1 rounded layer-tag">L3</span>
+                第三层：Cross-Encoder 精排 + 动态滑窗
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">有了向量检索，为什么还要 Cross-Encoder 精排？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">向量检索用的是"双塔模型"——query 和文档分别编码再算距离，速度快但精度有限。Cross-Encoder 把 query 和文档<strong>拼在一起</strong>输入模型，能捕捉更细粒度的语义交互，打分更准。代价是慢，所以只对粗筛后的少量候选做精排。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么用 0.65 作为阈值？这个数字怎么定的？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">这是一个经验阈值，通常通过在标注数据集上做网格搜索确定。0.65 表示"中等相关性以上"。低于这个分数的文档大概率是噪音，喂给 LLM 反而会干扰回答质量。这个值在系统中作为"硬红线"，可配置调整。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要动态调整 K 值（2~12），固定 Top-5 不行吗？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <div class="text-xs text-slate-600 leading-relaxed">
+                            <p>固定 Top-5 的问题：</p>
+                            <ul class="list-disc ml-4 mt-1 space-y-1">
+                                <li><strong>宏观问题</strong>（如"总结公司全年战略"）需要大量上下文，Top-5 远远不够 &rarr; 检索不足</li>
+                                <li><strong>简单问题</strong>（如"XX 的定义是什么"）只需要 1-2 条精准文档，Top-5 多出来的都是噪音 &rarr; 噪音倒灌</li>
+                            </ul>
+                            <p class="mt-2">动态滑窗根据实际得分密度自动伸缩，高分多就多给，低分多就少给，自适应不同复杂度的问题。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== L4 问答 ==================== -->
+        <section id="l4" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="question-badge text-white text-xs px-2 py-1 rounded layer-tag">L4</span>
+                第四层：流缓冲区审计 + 重试降级
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要"拦截"LLM 的输出？直接让它说完不行吗？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">如果检索到的文档确实不足以回答问题，LLM 会基于不完整的信息"硬编"一个看似合理但错误的回答——这就是幻觉。通过让 LLM 在判断信息不足时输出 <code class="bg-slate-100 px-1 rounded">【INSUFFICIENT_INFO】</code> 标记，系统可以在用户看到错误回答<strong>之前</strong>拦截并触发重试，把检索范围从 Top-20 扩大到 Top-50，补充更多上下文重新生成。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么只检查前 20 个 Token？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">LLM 如果要表达"信息不足"，通常会在回答开头就说（如"抱歉，我没有找到足够的信息......"）。前 20 个 Token（约 100 个字符）足够捕获这类声明。检查更多 Token 会增加延迟，检查太少可能遗漏。20 是一个经验平衡值。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">重试一次还是无限重试？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">只重试一次，扩大到 Top-50。如果 Top-50 还不够，说明知识库本身就不包含答案，再重试也无意义。无限重试会导致延迟不可控，用户体验极差。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== 生产配置问答 ==================== -->
+        <section id="production" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="bg-slate-700 text-white text-xs px-2 py-1 rounded layer-tag">PROD</span>
+                生产配置相关
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要关闭思考链（think=False）？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <div class="text-xs text-slate-600 leading-relaxed">
+                            <p>思考链（Chain-of-Thought）让模型先"想"再"答"，会生成大量 Reasoning Tokens。在 RAG 场景中，答案的事实依据来自检索到的文档，不是模型的推理过程。思考链会：</p>
+                            <ol class="list-decimal ml-4 mt-1 space-y-1">
+                                <li><strong>增加 TTFT</strong>（首字延迟变长，用户等得久）</li>
+                                <li><strong>挤占上下文窗口</strong>（推理 Token 占了本该给文档的位子）</li>
+                                <li><strong>增加显存开销</strong>（KV Cache 膨胀）</li>
+                            </ol>
+                            <p class="mt-2">所以在事实型 RAG 场景中，思考链弊大于利。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要锁 16K 上下文窗口？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">上下文窗口越大，KV Cache 显存占用越大。16K 是在"能容纳足够多的检索文档"和"单请求显存可控（~2.5GB）"之间的平衡点。更大的窗口意味着更低的并发能力。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要用 Semaphore 做并发控制？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">动态滑窗允许单请求最多塞入 12 个父块，这会导致单请求显存突发性膨胀。如果不做并发限制，多个请求同时涌入 GPU 会导致显存溢出（OOM），整个服务崩溃。Semaphore 信号量限制同时在 GPU 上运行的请求数，超出的排队等待。</p>
+                    </div>
+                </div>
+
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">85% 显存警戒线是什么？为什么要压回 4 个块？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <p class="text-xs text-slate-600 leading-relaxed">当总显存使用达到 85%，离 OOM 只有 15% 的余量。此时如果再来几个弹性到 12 块的大请求，随时可能爆。系统自动把滑窗上限从 12 压回 4，牺牲少数宏观长文本问题的回答完整性，换取全集群不崩——这是典型的 <strong>"丢车保帅"</strong> 策略。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== 架构整体问答 ==================== -->
+        <section id="architecture" class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-6 flex items-center gap-2">
+                <span class="bg-rose-600 text-white text-xs px-2 py-1 rounded layer-tag">ARCH</span>
+                架构整体
+            </h2>
+
+            <div class="space-y-5">
+                <div class="qa-card pl-5 py-3">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">Q</span>
+                        <p class="text-sm font-bold text-slate-800">为什么要"四层防线"而不是一层搞定？</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5">A</span>
+                        <div class="text-xs text-slate-600 leading-relaxed">
+                            <p>每一层解决不同阶段的问题，层层递进：</p>
+                            <ol class="list-decimal ml-4 mt-2 space-y-1.5">
+                                <li><strong>第一层</strong>解决"没搜到"（召回不足）&rarr; 拓宽查询</li>
+                                <li><strong>第二层</strong>解决"搜到了但上下文不够"（碎片化）&rarr; 父子级联</li>
+                                <li><strong>第三层</strong>解决"搜到了但不相关"（噪音）&rarr; 精排过滤</li>
+                                <li><strong>第四层</strong>解决"喂给模型了但它判断不够"（生成兜底）&rarr; 流式拦截重试</li>
+                            </ol>
+                            <p class="mt-2">单一层无法覆盖所有失败模式，四层组合形成完整的<strong>防御纵深</strong>。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-slate-200 text-center py-6 text-[11px] text-slate-500 border-t border-slate-300 mt-12 font-mono">
+        <p>RAG 名词解释与FAQ手册 // 基于《企业级 RAG 自适应检索架构技术白皮书 v2.0》整理</p>
+    </footer>
+
+</body>
+</html>

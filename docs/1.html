@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 系统架构设计与名词依据白皮书</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .code-style { background-color: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 0.375rem; font-size: 0.8rem; line-height: 1.4; overflow-x: auto; }
+    </style>
+</head>
+<body class="bg-[#f4f6f9] text-slate-900 antialiased py-8 px-4">
+
+    <main class="max-w-4xl mx-auto space-y-8">
+        
+        <section class="bg-white p-6 rounded-lg border border-slate-200 shadow-xs">
+            <h2 class="text-base font-bold font-mono text-slate-900 border-l-4 border-slate-800 pl-2 mb-4">一、 系统级级联拓扑架构 (System Topology)</h2>
+            <div class="bg-white p-2 border border-slate-100 rounded">
+                <pre class="mermaid bg-transparent text-center">
+graph TD
+    UserQ([用户原始提问]) --> API_Gate[FastAPI 网关]
+    
+    subgraph L1[第一层：海选召回 (越多越好)]
+        API_Gate -->|意图改写衍生 4 组 Query| Q_Fuse[Query Fusion 并发机制]
+        Q_Fuse -->|Bi-Encoder 快速夹角比对| Qdrant_DB[(Qdrant 向量库: 捞回 Top-20)]
+    end
+
+    subgraph L2[第二层：外键映射与精排 (动态收紧)]
+        Qdrant_DB -->|提取子块绑定的 parent_id| PG_Join{SQLAlchemy 级联查询}
+        PG_Join -->|读出 2000字 纯文本父块| CE_Rerank[Cross-Encoder 交叉编码器算分]
+        CE_Rerank -->|Score >= 0.65 动态滑窗控制| K_Gate{elastic_k: 2 ~ 12 截断}
+    end
+
+    subgraph L3[第三层：大模型推理 (严防噪音与溢出)]
+        K_Gate -->|黄金上下文组装| LLM_Inference[Ollama: qwen3.5 think=False]
+        LLM_Inference -->|前置 Token Buffer Window 20| Stream_Check{缺失判定状态机}
+        Stream_Check -->|True: INSUFFICIENT_INFO| Retry_Loop[二次扩大检索至 Top-50 回路]
+        Stream_Check -->|False: 安全通过| SSE_Out([流式输出])
+    end
+
+    Retry_Loop -.->|补偿流| Q_Fuse
+    SSE_Out --> UserQ
+
+    style L1 fill:#f8fafc,stroke:#cbd5e1,stroke-width:1px
+    style L2 fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px
+    style L3 fill:#f0fdf4,stroke:#bbf7d0,stroke-width:1px
+                </pre>
+            </div>
+        </section>
+
+        <section class="bg-white p-6 rounded-lg border border-slate-200 shadow-xs space-y-6">
+            <h2 class="text-base font-bold font-mono text-slate-900 border-l-4 border-slate-800 pl-2">二、 底层组件模型与逻辑接口定义 (Schema & Interface)</h2>
+            
+            <div>
+                <h3 class="text-xs font-bold text-slate-700 mb-2">[ORM_MODEL] 显式分离存储模型 (PostgreSQL)</h3>
+                <pre class="code-style">
+# models.py
+from sqlalchemy import Column, String, Text, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class ParentDocument(Base):
+    """
+    【父表】：存放长文本片段或结构化章节摘要。不存储原始 PDF 字节流，只存路径及解析后的纯文本。
+    """
+    __tablename__ = 'parent_documents'
+    
+    id = Column(String(36), primary_key=True)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(512), nullable=False)        # 预留物理路径，用于前端追溯与下载
+    full_parent_text = Column(Text, nullable=False)        # 2000字左右的清洗后文本，供大模型最终读取
+    security_level = Column(String(20), default="public")  # RBAC 隔离字段
+
+    children = relationship("ChildChunk", back_populates="parent", cascade="all, delete-orphan")
+
+class ChildChunk(Base):
+    """
+    【子表】：存放细粒度短文本片段，与向量库的 Point ID 保持 1:1 特征映射
+    """
+    __tablename__ = 'child_chunks'
+    
+    id = Column(String(36), primary_key=True)
+    parent_id = Column(String(36), ForeignKey('parent_documents.id', ondelete='CASCADE')) # 核心名词物理暗桩：parent_id
+    child_text = Column(Text, nullable=False)              # 300字高聚焦纯文本（用于向量化输入）
+    qdrant_point_id = Column(String(36))                   # 对应 Qdrant 里的 Point UUID
+    
+    parent = relationship("ParentDocument", back_populates="children")
+                </pre>
+            </div>
+
+            <div>
+                <h3 class="text-xs font-bold text-slate-700 mb-2">[LOGIC_GATE] 弹性滑窗控制算法 (Python)</h3>
+                <pre class="code-style">
+# filter.py
+async def execute_dynamic_window_filtering(query: str, raw_db_chunks: list, settings: RerankSettings):
+    """
+    基于 Cross-Encoder 绝对置信度分数的弹性滑窗截断逻辑
+    """
+    # 拼装交叉注意力的打分对 [[query, text1], [query, text2] ... ]
+    input_pairs = [[query, chunk.child_text] for chunk in raw_db_chunks]
+    ce_scores = await cross_encoder_service.predict(input_pairs) # 跨服务调用隔离的模型网关
+    
+    eligible_chunks = []
+    for chunk, score in zip(raw_db_chunks, ce_scores):
+        if score >= settings.score_threshold: # 依据三：基于 0.65 置信度硬红线过滤低相关噪音
+            chunk.meta['score'] = score
+            eligible_chunks.append(chunk)
+            
+    # 按得分重排，并根据显存上限约束进行弹性 K 值截断 (elastic_min_k=2, elastic_max_k=12)
+    eligible_chunks = sorted(eligible_chunks, key=lambda x: x.meta['score'], reverse=True)
+    return eligible_chunks[:settings.elastic_max_k]
+                </pre>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.run();
+        });
+    </script>
+</body>
+</html>

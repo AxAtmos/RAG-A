@@ -1,0 +1,304 @@
+app:
+  description: ''
+  icon: "\U0001F6E0"
+  icon_background: '#E4FBCC'
+  mode: advanced-chat
+  name: 管理助手
+  use_icon_as_answer_icon: false
+kind: app
+version: 0.1.5
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      image:
+        enabled: false
+    opening_statement: "你好！我是 RAG 知识库管理助手。我可以帮你：\n1. 查询文档列表\n2. 废弃文档\n3. 查看审计日志\n\n请告诉我你需要什么操作？"
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - "查看文档列表"
+      - "查看审计日志"
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: e1
+        source: start_node
+        target: classifier_node
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: question-classifier
+      - id: e2
+        source: classifier_node
+        target: http_list
+        sourceHandle: cls_list
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: question-classifier
+          targetType: http-request
+      - id: e3
+        source: classifier_node
+        target: llm_deprecate
+        sourceHandle: cls_deprecate
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: question-classifier
+          targetType: llm
+      - id: e4
+        source: classifier_node
+        target: http_audit
+        sourceHandle: cls_audit
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: question-classifier
+          targetType: http-request
+      - id: e5
+        source: http_list
+        target: answer_list
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: http-request
+          targetType: answer
+      - id: e6
+        source: llm_deprecate
+        target: http_deprecate
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: http-request
+      - id: e7
+        source: http_deprecate
+        target: answer_deprecate
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: http-request
+          targetType: answer
+      - id: e8
+        source: http_audit
+        target: answer_audit
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: http-request
+          targetType: answer
+    nodes:
+      - id: start_node
+        type: custom
+        data:
+          type: start
+          title: 开始
+          desc: ''
+          variables: []
+        position:
+          x: 80
+          y: 282
+        sourcePosition: right
+        targetPosition: left
+      - id: classifier_node
+        type: custom
+        data:
+          type: question-classifier
+          title: 意图分类
+          desc: 判断用户意图
+          query_variable_selector:
+            - start_node
+            - sys.query
+          model:
+            provider: langgenius/ollama/ollama
+            name: 'qwen3.5:9b'
+            mode: chat
+            completion_params:
+              temperature: 0.1
+          classes:
+            - id: cls_list
+              name: 查询文档列表
+            - id: cls_deprecate
+              name: 废弃文档
+            - id: cls_audit
+              name: 查看审计日志
+          vision:
+            enabled: false
+        position:
+          x: 380
+          y: 282
+        sourcePosition: right
+        targetPosition: left
+      - id: http_list
+        type: custom
+        data:
+          type: http-request
+          title: 查询文档
+          desc: 获取文档列表
+          method: get
+          url: 'http://192.168.10.104:8000/api/admin/docs'
+          headers: ''
+          params: 'status=active'
+          body:
+            type: none
+            data: ''
+          authorization:
+            type: no-auth
+          timeout:
+            max_connect_timeout: 10
+            max_read_timeout: 30
+          retry:
+            max_retries: 0
+            retry_interval: 1000
+        position:
+          x: 700
+          y: 100
+        sourcePosition: right
+        targetPosition: left
+      - id: http_audit
+        type: custom
+        data:
+          type: http-request
+          title: 查询审计日志
+          desc: 获取审计日志
+          method: get
+          url: 'http://192.168.10.104:8000/api/admin/audit-log'
+          headers: ''
+          params: ''
+          body:
+            type: none
+            data: ''
+          authorization:
+            type: no-auth
+          timeout:
+            max_connect_timeout: 10
+            max_read_timeout: 30
+          retry:
+            max_retries: 0
+            retry_interval: 1000
+        position:
+          x: 700
+          y: 500
+        sourcePosition: right
+        targetPosition: left
+      - id: llm_deprecate
+        type: custom
+        data:
+          type: llm
+          title: 解析废弃指令
+          desc: 从用户输入中提取 doc_id 和 reason
+          model:
+            provider: langgenius/ollama/ollama
+            name: 'qwen3.5:9b'
+            mode: chat
+            completion_params:
+              temperature: 0.1
+          prompt_template:
+            - role: system
+              text: "从用户输入中提取文档ID和废弃原因。输出JSON格式：{\"doc_id\": \"xxx\", \"reason\": \"xxx\"}。如果用户没有提供reason，reason填空字符串。只输出JSON，不要其他内容。"
+            - role: user
+              text: '{{#start_node.sys.query#}}'
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+        position:
+          x: 700
+          y: 300
+        sourcePosition: right
+        targetPosition: left
+      - id: http_deprecate
+        type: custom
+        data:
+          type: http-request
+          title: 执行废弃
+          desc: 调用废弃API
+          method: post
+          url: 'http://192.168.10.104:8000/api/admin/deprecate'
+          headers: |-
+            Content-Type: application/json
+          params: ''
+          body:
+            type: json
+            data: '{{#llm_deprecate.text#}}'
+          authorization:
+            type: no-auth
+          timeout:
+            max_connect_timeout: 10
+            max_read_timeout: 30
+          retry:
+            max_retries: 0
+            retry_interval: 1000
+        position:
+          x: 1000
+          y: 300
+        sourcePosition: right
+        targetPosition: left
+      - id: answer_list
+        type: custom
+        data:
+          type: answer
+          title: 输出文档列表
+          desc: ''
+          answer: |
+            以下是当前活跃的文档列表：
+
+            {{#http_list.body#}}
+          variables: []
+        position:
+          x: 1000
+          y: 100
+        sourcePosition: right
+        targetPosition: left
+      - id: answer_deprecate
+        type: custom
+        data:
+          type: answer
+          title: 输出废弃结果
+          desc: ''
+          answer: |
+            文档废弃操作结果：
+
+            {{#http_deprecate.body#}}
+          variables: []
+        position:
+          x: 1300
+          y: 300
+        sourcePosition: right
+        targetPosition: left
+      - id: answer_audit
+        type: custom
+        data:
+          type: answer
+          title: 输出审计日志
+          desc: ''
+          answer: |
+            以下是审计日志：
+
+            {{#http_audit.body#}}
+          variables: []
+        position:
+          x: 1000
+          y: 500
+        sourcePosition: right
+        targetPosition: left
+    viewport:
+      x: 0
+      y: 0
+      zoom: 1

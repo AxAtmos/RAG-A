@@ -1,0 +1,113 @@
+app:
+  description: ''
+  icon: "\U0001F4DA"
+  icon_background: '#E4FBCC'
+  mode: advanced-chat
+  name: 知识问答
+  use_icon_as_answer_icon: false
+kind: app
+version: 0.1.5
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      image:
+        enabled: false
+    opening_statement: "你好！我是 RAG 知识库问答助手，请输入你的问题。"
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - "如何查询文档？"
+      - "知识库中有哪些文档？"
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: start-to-http
+        source: start_node
+        target: http_request_node
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: http-request
+      - id: http-to-answer
+        source: http_request_node
+        target: answer_node
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: http-request
+          targetType: answer
+    nodes:
+      - id: start_node
+        type: custom
+        data:
+          type: start
+          title: 开始
+          desc: ''
+          variables: []
+        position:
+          x: 80
+          y: 282
+        sourcePosition: right
+        targetPosition: left
+      - id: http_request_node
+        type: custom
+        data:
+          type: http-request
+          title: 调用 RAG API
+          desc: 调用知识库查询接口
+          method: post
+          url: 'http://192.168.10.104:8000/api/query-sync'
+          headers: |-
+            Content-Type: application/json
+          params: ''
+          body:
+            type: json
+            data: |-
+              {"question": "{{sys.query}}"}
+          authorization:
+            type: no-auth
+          timeout:
+            max_connect_timeout: 30
+            max_read_timeout: 120
+          retry:
+            max_retries: 1
+            retry_interval: 1000
+        position:
+          x: 380
+          y: 282
+        sourcePosition: right
+        targetPosition: left
+      - id: answer_node
+        type: custom
+        data:
+          type: answer
+          title: 输出回答
+          desc: ''
+          answer: |
+            {{http_request_node.body.answer}}
+
+            ---
+            **引用来源：**
+            {{http_request_node.body.sources}}
+          variables: []
+        position:
+          x: 680
+          y: 282
+        sourcePosition: right
+        targetPosition: left
+    viewport:
+      x: 0
+      y: 0
+      zoom: 1

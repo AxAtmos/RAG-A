@@ -1,0 +1,136 @@
+# RAG Enterprise - Global Configuration
+# ========================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 2
+
+# Knowledge base folder (shared SMB/NFS mount)
+knowledge_base:
+  root: "/knowledge_base"
+  processed_dir: "/knowledge_base/_processed"
+  images_dir: "/data/images"
+  supported_extensions:
+    - ".pdf"
+    - ".docx"
+    - ".xlsx"
+    - ".pptx"
+    - ".md"
+    - ".txt"
+    - ".epub"
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".bmp"
+
+# Ollama LLM configuration
+ollama:
+  base_url: "http://localhost:11434"
+  model: "qwen3.5:9b"
+  timeout: 120
+  num_ctx: 16384
+  token_buffer_size: 20
+
+# Embedding model
+embedding:
+  model_name: "BAAI/bge-m3"
+  device: "cuda"       # cuda or cpu
+  batch_size: 64
+  max_length: 8192
+  dimension: 1024
+
+# Reranker model
+reranker:
+  model_name: "BAAI/bge-reranker-v2-m3"
+  device: "cuda"
+  top_n: 5
+
+# Qdrant vector database
+qdrant:
+  host: "localhost"
+  port: 6333
+  collection_name: "knowledge"
+  vector_dimension: 1024
+  distance: "Cosine"
+
+# PostgreSQL metadata database
+postgres:
+  host: "localhost"
+  port: 5433
+  database: "rag_enterprise"
+  user: "rag"
+  password: "rag_secret_2026"
+
+# Document chunking
+chunking:
+  strategy: "parent_child" # parent_child / semantic / recursive / fixed
+  chunk_size: 512          # target tokens per chunk (legacy)
+  chunk_overlap: 50        # overlap tokens (legacy)
+  min_chunk_size: 100      # merge chunks smaller than this
+  max_chunk_size: 1024     # split chunks larger than this
+  parent_chunk_size: 2000  # parent block: ~2000 chars
+  child_chunk_size: 300    # child block: ~300 chars
+  parent_child_overlap: 45 # overlap between child blocks (chars)
+
+# Retrieval
+retrieval:
+  top_k: 20               # first stage: vector search top-k
+  rerank_top_n: 5          # second stage: reranker top-n
+  score_threshold: 0.3     # below this, mark as low-confidence
+  elastic_min_k: 2         # dynamic window: minimum chunks
+  elastic_max_k: 12        # dynamic window: maximum chunks
+  ce_threshold: 0.65       # Cross-Encoder hard filter threshold
+  retry_top_k: 50          # retry: expand Qdrant search to top-50
+  query_fusion_count: 4    # number of query rewrite variants
+  query_rewrite_enabled: false
+  query_llm_model: ""
+
+# Stream & retry
+stream:
+  enabled: true
+  insufficient_tag: "【INSUFFICIENT_INFO】"
+  vram_total_gb: 16.0      # total GPU VRAM in GB
+  model_weights_gb: 5.0    # model static weights size
+  max_elastic_token_window_gb: 4.8  # 12 parent blocks ~4.8GB
+  vram_warning_threshold: 0.85      # 85% VRAM usage triggers fallback
+
+# Document lifecycle
+lifecycle:
+  auto_expire:
+    enabled: true
+    check_interval_hours: 24
+    rules: []
+    # Example rules:
+    # - category: "会议纪要"
+    #   expire_after_days: 180
+    # - category: "测试报告"
+    #   expire_after_days: 365
+
+# RBAC
+rbac:
+  default_role: "engineer"
+  roles:
+    - super_admin
+    - dept_manager
+    - project_lead
+    - engineer
+    - guest
+
+# Dify integration
+dify:
+  enabled: false
+  api_url: "http://dify-api/v1"
+  api_key: ""
+
+# Watcher
+watcher:
+  poll_interval: 5         # seconds between folder scans
+  debounce_seconds: 10     # wait after file change before processing
+
+# Logging
+logging:
+  level: "INFO"
+  file: "/data/logs/rag.log"
+  max_bytes: 10485760      # 10MB
+  backup_count: 5

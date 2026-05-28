@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业级通用 RAG 知识库系统架构方案白皮书</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .spec-table th, .spec-table td { border-bottom: 1px solid #e2e8f0; padding: 1rem; }
+        .spec-table tr:last-child td { border-bottom: none; }
+    </style>
+</head>
+<body class="bg-[#f8fafc] text-slate-800 antialiased leading-relaxed">
+
+    <header class="bg-slate-900 text-slate-100 shadow-md sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-base font-bold tracking-wider flex items-center gap-2">
+                <span class="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-ping"></span>
+                Standard Production-Ready RAG Architecture Specification
+            </h1>
+            <span class="bg-indigo-600 text-white text-[10px] px-2.5 py-1 rounded font-mono font-bold uppercase tracking-widest">Enterprise Blueprint</span>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-12">
+        
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <div class="border-b border-slate-200 pb-6 mb-6">
+                <span class="text-xs font-bold uppercase text-indigo-600 tracking-widest block mb-2">High-Availability Technical Design</span>
+                <h2 class="text-3xl font-black text-slate-900 tracking-tight">面向高并发场景的企业级通用 RAG 知识库系统方案说明书</h2>
+            </div>
+            <p class="text-slate-600 text-sm leading-relaxed">
+                本设计白皮书旨在阐述一套具备强鲁棒性、高容错率及权限隔离特性的通用离线知识库系统。系统采用
+                <span class="font-bold text-slate-900">“双网关解耦、漏斗式两阶段检索、三级切片自自动降级与分布式最终一致性双写”</span>
+                的核心架构，通过引入标准工业级 <span class="font-bold text-slate-900">Cross-Encoder (交叉编码器)</span> 重排引擎，在底层彻底消除高并发下的算力挤兑与长尾噪音污染，为全场景企业提供高确定性的事实问答服务。
+            </p>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <h3 class="text-lg font-bold text-slate-900 mb-4 border-l-4 border-indigo-600 pl-3">1. 行业标准全链路数据流转图 (System Topology)</h3>
+            <p class="text-slate-500 text-xs mb-6">注：下图已基于 Mermaid v10 语法规范重构，无缝渲染。全图解耦为异步入库管道与多维过滤检索网关两条主线。</p>
+            
+            <div class="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow-inner overflow-x-auto">
+                <pre class="mermaid text-center bg-transparent">
+graph TD
+    %% 业务入口
+    DocSource([企业多源技术文档]) --> API_Ingest[FastAPI 文档接收端]
+    UserQuery([多用户终端提问]) --> API_Query[FastAPI 核心检索网关]
+
+    %% 异步入库主线
+    subgraph Pipeline_A[【异步解耦入库管道】]
+        API_Ingest -->|异步接收/秒回响应| MQ[持久化消息队列 / Task Queue]
+        MQ -->|Worker 多线程消费| Extractor[多格式文本清洗与结构化提取]
+        Extractor -->|分块决策路由| Router{分块自动降级链}
+        
+        Router -->|策略一| LLM_Chunk[大模型语义章节分割]
+        Router -->|策略二| Rec_Chunk[递归字符边界切分]
+        Router -->|策略三| Fix_Chunk[固定长度硬性切断]
+        
+        LLM_Chunk & Rec_Chunk & Fix_Chunk --> MetaExtract[元数据抽取/外键审计关联]
+    end
+
+    %% 分布式双写一致性
+    MetaExtract -->|提交最终一致性事务| SyncCore{sync_manager 控制器}
+    subgraph StorageLayer[【企业核心存储层】]
+        SyncCore -->|1. 级联写入关系表| Postgres[(PostgreSQL 元数据与审计库)]
+        SyncCore -->|2. 高维向量化后注入| Qdrant[(Qdrant 稠密向量分布式集群)]
+    end
+    Qdrant -.->|写入故障/超时| SyncCore
+
+    %% 多维过滤检索主线
+    subgraph Pipeline_B[【多维过滤检索网关】]
+        API_Query -->|Depends 依赖注入| RBAC[RBAC 角色/部门密级拦截器]
+        RBAC -->|动态装配硬性过滤体| FilterEngine[Qdrant HNSW 图层物理过滤]
+        FilterEngine -->|高效捞回向量粗筛集合| Top20[捞出 Top-20 候选知识块]
+        
+        %% Cross-Encoder 重排物理隔离
+        Top20 -->|跨模型服务网关隔离调用| CrossEncoder[Cross-Encoder 交叉编码器精排]
+        CrossEncoder -->|双向全量注意力深度算分| Top5[截断并锁定精准 Top-5 知识块]
+        
+        Top5 -->|动态窗口 Token 计数与裁剪| PromptTemplate[硬核上下文 Prompt 组装]
+        PromptTemplate -->|生成大模型推理/锁死低温度| LLM_Gen[自回归生成 think=False]
+    end
+
+    LLM_Gen -->|Stream=True 流式 SSE 协议| UserQuery
+
+    %% 节点美化配置
+    style Pipeline_A fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px
+    style Pipeline_B fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px
+    style StorageLayer fill:#e2e8f0,stroke:#64748b,stroke-width:2px
+    style DocSource fill:#38bdf8,stroke:#0284c7,stroke-width:2px
+    style UserQuery fill:#34d399,stroke:#059669,stroke-width:2px
+                </pre>
+            </div>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60 mb-10">
+            <h3 class="text-lg font-bold text-slate-900 mb-6 border-l-4 border-indigo-600 pl-3">2. 生产级架构深度重设理由（Technical Rationale）</h3>
+            
+            <div class="space-y-8 text-sm leading-relaxed">
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-600 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">01</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">为什么要将 Cross-Encoder 精排独立进行模型服务隔离？</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            在行业标准设计中，<strong>Cross-Encoder（交叉编码器）</strong> 是消灭大模型技术代差与幻觉的终极武器。由于它摒弃了传统的单向量相似度比对，强行把 <code>[Query]</code> 与 <code>[Chunk]</code> 组合成一条数据整体输入网络，利用内部全部 <strong>Self-Attention（自注意力）矩阵</strong> 进行双向碰撞交互打分，因而精度极高。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            然而，这种高阶的计算代价是 $O(N^2)$ 的显存与算力开销。如果将其与大模型生成或网关进程混在一个容器内，多用户并发时，对 Top-20 的候选块进行并行矩阵连乘会产生恐怖的计算真空期，直接诱发静态显存挤兑崩盘（OOM）。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>鲁棒设计：</strong> 架构必须对 Cross-Encoder 实施 <strong>Model Mesh（模型服务网关隔离）</strong>。将其部署在独立的容器、专用的算力实例上，前端设置请求缓冲区与<strong>动态批处理（Dynamic Batching）</strong>。网关层通过标准高效异步请求调取，在物理层面上切断算力挤兑向核心生成服务的传导链路。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-600 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">02</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">为什么要用持久化队列与两阶段事务（SQLAlchemy + Qdrant）重构数据入库？</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            传统的实时入库模式在面对企业批量导入文档（如一次性拉取整本技术白皮书、全套标准规范）时，会瞬间将服务器的 I/O 吞吐率拉满，导致主 API 进程陷入无限阻塞，内网其余正在提问的开发人员会遭遇请求严重卡死。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>鲁棒设计：</strong> 系统入库流必须引入 <strong>持久化消息队列削峰（Task Queue Pattern）</strong>。FastAPI 仅负责完成文件的接收完整性校验并秒回响应，解析与清洗逻辑全部异步交由后端的多个独立 Worker 进程并发消费。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            同时，必须通过底层 <code>sync_manager</code> 拦截控制一致性：在 SQLAlchemy 数据库 Session 中开启分布式事务，先向 PostgreSQL 级联表中插入主数据、角色外键、自动过期及操作审计日志（<code>doc_audit_log</code>），在内存中挂起尚未 Commit 时锁定全局 <code>doc_id</code>；随即启动向量编码并将该 ID 作为强Payload属性压入 Qdrant。一旦 Qdrant 发生抖动，系统捕获该阶段异常并触发本地 <code>pg_session.rollback()</code>。通过将状态标记为 <code>sync_failed</code> 并自动打入死信重试队列，从底层彻底根除“数据库有文件记录，但向量库搜不到”的幽灵数据问题。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-600 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">03</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">切片层“三级自动降级”与格式定制化清洗的行业规范是什么？</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            工业级文档处理管道的核心铁律是：<strong>“绝对不能因为单个不可预期文件的排版混乱或模型抖动导致整个自动化流水线挂起停滞”</strong>。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>鲁棒设计：</strong> 建立模块化 <code>LoaderRegistry</code> 机制，对文本切片实施标准的弹性三级降级链路。<strong>一级策略</strong>优先使用轻量级 LLM 通过结构化大纲 Prompt 抓取章节分块；若模型超时或 JSON 格式校验失败，无缝 fallback 降级到<strong>二级策略（递归字符边界分块）</strong>，按自然段落、标点符号进行逻辑拆分；若面临极端故障，自动激活<strong>三级兜底策略（固定 512 字符长度硬截断分块）</strong>，死守管道的通畅性。
+                        </p>
+                        <p class="text-slate-600 mt-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <strong>📂 行业级针对性文本清洗标准：</strong><br>
+                            - <strong>PDF层设计：</strong> 必须基于物理方块的二维几何坐标进行位置排序，彻底对齐跨栏或双栏的排版段落顺序，原地过滤页眉、页脚。同时将文档内嵌图片无损异步剥离，原位植入全局唯一追踪标签。<br>
+                            - <strong>表格/矩阵层设计：</strong> 彻底废弃无脑提取纯文字的做法，强制通过行列遍历将表格矩阵转化成带有标准的 <code>| 表头 |</code> 格式的 <strong>Markdown 文本块</strong>，最大化保留离线表格在向量高维空间内的几何对齐语义。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-600 text-white font-mono font-bold px-3 py-1 rounded-md mt-0.5">04</div>
+                    <div>
+                        <h4 class="font-extrabold text-slate-900 text-base">网关层 Depends 依赖注入与两阶段多维过滤检索的物理优势</h4>
+                        <p class="text-slate-600 mt-1.5">
+                            在多用户并发环境下，RAG 系统的最大挑战来自于对不同部门、不同项目、以及已经过期废弃的文档进行密级隔离与并发保护。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>1. Depends 网关中间件拦截：</strong> 借助 FastAPI 强大的 <code>Depends</code> 依赖注入机制，路由函数在进入核心逻辑前被强行注入 <code>verify_rbac_permission</code> 网关拦截器。它能够在解耦状态下自动完成多用户 Session 审计、JWT 状态提取、以及数据库层级的外键关联权限查询。
+                        </p>
+                        <p class="text-slate-600 mt-1">
+                            <strong>2. 漏斗式两阶段过滤机制：</strong> 检索阶段绝不能盲目计算向量距离。<strong>第一阶段</strong>通过将用户的 RBAC 可见性标签与文档生命周期状态打包成 Qdrant 原生的嵌套结构体 <strong>Payload Filter</strong>。Qdrant 在 HNSW 向量索引图遍历期间直接应用此条件，在底层剔除无权、无效、过期的 Chunk 点，零延迟捞回 Top-20；<strong>第二阶段</strong>将其甩给物理隔离的 Cross-Encoder 精排模型，利用双向注意力机制完成高精度重构，最终截取最具置信度的 Top-5。这种两阶段网关设计在物理层实现了极高安全边界与极低计算延迟。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-white p-10 rounded-2xl shadow-sm border border-slate-200/60">
+            <h3 class="text-lg font-bold text-slate-900 mb-4 border-l-4 border-indigo-600 pl-3">3. 生产环境核心组件组件级配置蓝图 (Parameter Blueprint)</h3>
+            
+            <div class="overflow-x-auto mt-6">
+                <table class="w-full text-left border-collapse text-sm spec-table">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200">
+                            <th class="text-slate-700 font-black w-1/4">服务与数据层级</th>
+                            <th class="text-slate-700 font-black w-1/4">标准工业推荐参数</th>
+                            <th class="text-slate-700 font-black w-2/4">工程控损机制与底层物理设计考量</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-slate-600">
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">数据流切分层<br>(Data Slicing)</td>
+                            <td class="font-mono text-indigo-600 text-xs">chunk_size: 512 字<br>chunk_overlap: 64 字<br>debounce_window: 10s</td>
+                            <td class="p-4">规范单个背景数据块的物理截断长度，确保单个 Chunk 在转高维空间时语义极其聚焦。10秒防抖窗口用于确保外部共享文件系统的句柄写入完全释放。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">高性能路由层<br>(Dual Gateways)</td>
+                            <td class="font-mono text-indigo-600 text-xs">vector_top_k: 20<br>rerank_top_k: 5<br>dynamic_batching: Enabled</td>
+                            <td class="p-4">向量数据库依赖嵌套 Payload Filter 在 HNSW 底层秒级完成权限粗筛。精排层完全隔离，由物理独立的 Cross-Encoder 跨服务深度交叉打分并截断为最强相关 Top-5。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900 bg-slate-50/30">大模型生成层<br>(Inference Engine)</td>
+                            <td class="font-mono text-indigo-600 text-xs">num_ctx: 16384 (16K)<br>temperature: 0.1 ~ 0.2<br>think: false (Disabled)</td>
+                            <td class="p-4">
+                                强制将上下文限制在 16K，使单用户动态 <strong>KV Cache</strong> 显存维持在 2.5GB 左右的安全水位。温度死锁在极低区间，彻底斩断采样随机概率。
+                                <br><strong>生产红线：</strong> 必须在 Prompt 和参数中强行锁死并<strong>关闭思考链（think=False）</strong>。在 RAG 事实性问答场景中，推理步（Reasoning Tokens）不仅无法带来可感知的准确率提升，反而会引发极高的首字延迟（TTFT），并在多并发时由于吐出海量内心独白而严重挤兑显卡总线带宽。
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-8 bg-red-50 border border-red-200 rounded-xl p-6 flex items-start gap-4">
+                <span class="text-red-600 text-xl font-black">⚠️</span>
+                <div class="text-red-950 text-xs leading-relaxed">
+                    <strong>多用户高并发物理显存控损边界（VRAM Boundaries Control）：</strong> <br>
+                    在企业私有化硬件落地环境中，服务器的物理显存（VRAM）是一个刚性的、无法弹性拉伸的容器。在架构部署和 FastAPI 并发管理中，必须强制遵循以下空间算力计算公式：<br>
+                    <span class="font-mono block bg-white/70 p-3 rounded-lg my-2 text-center font-bold text-red-700 border border-red-100">
+                        最大物理显存总开销 = 各模型静态权重文件大小之和 (LLM + Reranker + Embed) + [单用户 KV Cache 占用 (16K窗口约 2.2G) × 系统最大设计物理并发数]
+                    </span>
+                    为了杜绝多并发用户高频轰炸时导致的物理卡 OOM 崩溃，必须在 FastAPI 的网关入口层配置标准的 <code>asyncio.Semaphore</code> 信号量异步队列拦截。一旦内网并发连接数触及显存安全水位红线，系统自动将后续请求送入阻塞队列排队（Queue Waiting），从而在物理架构层上彻底捍卫整个企业大模型服务集群的业务连续性（Business Continuity）。
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-slate-100 text-center py-8 text-xs text-slate-500 border-t border-slate-200 mt-12">
+        <p>© 2026 Enterprise Knowledge Base Infrastructure & Generative AI Systems. Production Specification Technical Document.</p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.run();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业级 RAG 自适应检索架构技术白皮书 (工程师评审版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        .code-block { background-color: #0f172a; color: #e2e8f0; padding: 1.25rem; id: code; border-radius: 0.5rem; font-size: 0.85rem; line-height: 1.5; overflow-x: auto; }
+        .spec-table th, .spec-table td { border-bottom: 1px solid #e2e8f0; padding: 0.75rem 1rem; }
+        .spec-table tr:last-child td { border-bottom: none; }
+    </style>
+</head>
+<body class="bg-[#f4f6f9] text-slate-900 antialiased leading-relaxed">
+
+    <header class="bg-slate-800 text-slate-200 border-b border-slate-700 shadow-sm sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-6 py-3 flex justify-between items-center">
+            <h1 class="text-sm font-mono tracking-tight flex items-center gap-2">
+                [SYS_SPEC] RAG_Fault_Tolerant_Architecture_v2.0
+            </h1>
+            <span class="bg-slate-700 text-slate-300 text-[11px] px-2 py-0.5 rounded font-mono border border-slate-600">TECHNICAL REVIEW ONLY</span>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-8">
+        
+        <section class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-4">一、 方案设计概述 / Design Abstract</h2>
+            <p class="text-slate-600 text-xs">
+                本技术方案旨在解决 RAG（检索增强生成）系统在应对企业多源长文本、宏观提问时由于固定数量召回（如固定 Top-5）所导致的“检索不足（Under-retrieval）”与“长尾语义噪音”问题。系统通过解耦存储架构，部署由 <strong>Query 并行拓宽、父子块外键级联、Cross-Encoder 置信度动态滑窗、LLM反思重试状态机</strong> 构成的四层防御管道。本设计着重于组件层级接口预留及数据流动流转控制，以保障高并发环境下的整机高HA及数据一致性。
+            </p>
+        </section>
+
+        <section class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-4">二、 系统拓扑与数据流转 / System Topology</h2>
+            <div class="bg-white p-4 rounded-lg border border-slate-200 overflow-x-auto">
+                <pre class="mermaid text-center bg-transparent">
+graph TD
+    %% 业务流量入口
+    UserIn([原始提问 / User Query]) --> FA_API[FastAPI 检索网关入口]
+
+    %% 第一层防线
+    subgraph L1[第一层：意图拓宽管道]
+        FA_API -->|后台 LLM 异步改写| Q_Fuse[Query Fusion: 4组并行近义句]
+        Q_Fuse -->|asyncio.gather 并发| Qdrant_S[Qdrant 向量 HNSW 检索]
+    end
+
+    %% 第二层防线
+    subgraph L2[第二层：关系存储级联管道]
+        Qdrant_S -->|命中的子块数据集合| PID_Check{Payload 是否包含 parent_id?}
+        PID_Check -->|True: 命中有外键| PG_Fetch[SQLAlchemy 级联读入长文本父块/摘要]
+        PID_Check -->|False: 无外键| Raw_Chunk[保持细粒度子块文本]
+    end
+
+    %% 第三层防线
+    subgraph L3[第三层：精排动态过滤管道]
+        PG_Fetch & Raw_Chunk -->|合并提问压入隔离模型服务| CE_Model[Cross-Encoder 交叉编码器算分]
+        CE_Model -->|Score >= 0.65 硬过滤| Thresh_Gate{弹性滑窗控制器}
+        Thresh_Gate -->|高分块富集| Max_Window[允许弹性扩容至 Max_K 12]
+        Thresh_Gate -->|低分块占多数| Min_Window[强行缩减至 Min_K 2]
+    end
+
+    %% 第四层防线
+    subgraph L4[第四层：流缓冲区审计与降级回路]
+        Max_Window & Min_Window -->|装配 Prompt 文本| Ollama_Inference[Ollama 推理引擎]
+        Ollama_Inference -->|前置 Token Buffer Window 20| Stream_Audit{前置判断: 包含信息缺失标签?}
+        
+        %% 二次重试闭环
+        Stream_Audit -->|True: 触发 INSUFFICIENT_INFO| Retry_Loop[重试状态机: 扩大 Qdrant 范围至 Top-50 二次检索]
+        Retry_Loop -.->|降级重试数据入流| Qdrant_S
+        
+        Stream_Audit -->|False: 安全通过| SSE_Out([Stream=True SSE 协议流式输出])
+    end
+
+    SSE_Out --> UserIn
+
+    %% 纯净排版配置
+    style L1 fill:#fafafa,stroke:#e2e8f0,stroke-width:1px
+    style L2 fill:#f8fafc,stroke:#cbd5e1,stroke-width:1px
+    style L3 fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px
+    style L4 fill:#f0fdf4,stroke:#bbf7d0,stroke-width:1px
+    style UserIn fill:#e0f2fe,stroke:#7dd3fc,stroke-width:1px
+    style SSE_Out fill:#dcfce7,stroke:#86efac,stroke-width:1px
+                </pre>
+            </div>
+        </section>
+
+        <section class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-4">三、 核心数据模型与核心算法接口设计 / Code & Schema Blueprint</h2>
+            <p class="text-slate-500 text-xs mb-4">为了承载上述四层自适应架构，必须在底层数据表结构（SQLAlchemy）与核心路由处理层预留以下物理字段和逻辑分支。</p>
+
+            <h3 class="text-sm font-bold text-slate-800 font-mono mb-2">3.1 关系型存储模型预留 (SQLAlchemy Relational Schema)</h3>
+            <p class="text-slate-600 text-xs mb-3">
+                <strong>设计边界说明：</strong> SQL 数据库不存储原始二进制物理文件流（PDF/DOCX等），只保留文件的物理存放路径（<code>file_path</code>）用于归档溯源。利用 Text 字段存放清洗完毕并结构化的长文本父块，提供高并发下的秒级内存检索响应。
+            </p>
+            <pre class="code-block">
+# models.py
+from sqlalchemy import Column, String, Text, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class ParentDocument(Base):
+    """
+    【父表】：存储宏观长文本片段或全章结构化摘要（解耦原始二进制文件流）
+    """
+    __tablename__ = 'parent_documents'
+    
+    id = Column(String(36), primary_key=True)
+    file_name = Column(String(255), nullable=False)        # 原始文件名追踪
+    file_path = Column(String(512), nullable=False)        # 【预留物理路径】：指向本地SSD或MinIO物理路径（禁止存大对象流）
+    full_parent_text = Column(Text, nullable=False)        # 2000字左右的纯文本父块，供检索不足时动态替换
+    security_level = Column(String(20), default="public")  # RBAC 权限硬连接锁
+
+    children = relationship("ChildChunk", back_populates="parent", cascade="all, delete-orphan")
+
+class ChildChunk(Base):
+    """
+    【子表】：存储微观细粒度文本片段，对应向量库特征映射
+    """
+    __tablename__ = 'child_chunks'
+    
+    id = Column(String(36), primary_key=True)
+    parent_id = Column(String(36), ForeignKey('parent_documents.id', ondelete='CASCADE'), nullable=True) # 【核心暗桩】：映射父块外键
+    child_text = Column(Text, nullable=False)            # 300字左右的高聚焦子文本
+    qdrant_point_id = Column(String(36))                 # 对应 Qdrant 存储的 Point UUID
+    
+    parent = relationship("ParentDocument", back_populates="children")
+            </pre>
+
+            <h3 class="text-sm font-bold text-slate-800 font-mono mt-6 mb-2">3.2 动态滑窗精排与流拦截机制 (Python Async Logic)</h3>
+            <pre class="code-block">
+# pipeline.py (FastAPI 路由核心处理层伪代码)
+async def rerank_and_filter(query: str, raw_chunks: list, settings: RerankSettings):
+    """
+    第三层防线：基于 Cross-Encoder 置信度绝对分值的动态滑窗机制
+    """
+    # 构造交叉编码器输入向量对 [ [query, chunk1], [query, chunk2] ... ]
+    pairs = [[query, chunk.text] for chunk in raw_chunks]
+    scores = await cross_encoder_mesh_service.predict(pairs) # 调用物理隔离的模型网关
+    
+    valid_chunks = []
+    for chunk, score in zip(raw_chunks, scores):
+        if score >= settings.score_threshold:  # 预留硬红线阈值控制 (如 0.65)
+            chunk.meta['ce_score'] = score
+            valid_chunks.append(chunk)
+            
+    # 根据得分密度动态调整滑窗大小 K 值
+    # 预留弹性区间限制：elastic_min_k=2, elastic_max_k=12
+    valid_chunks = sorted(valid_chunks, key=lambda x: x.meta['ce_score'], reverse=True)
+    return valid_chunks[:settings.elastic_max_k]
+
+
+async def ollama_stream_interceptor(response_generator):
+    """
+    第四层防线：FastAPI 异步迭代器 Token 缓冲区前置审计与重试状态机
+    """
+    token_buffer = ""
+    insufficient_flag_detected = False
+    
+    async for chunk in response_generator:
+        # 在大模型吐字的前 20 个 Tokens 内进行缓冲区截留审计
+        if not insufficient_flag_detected and len(token_buffer) < 100:
+            token_buffer += chunk['response']
+            if "【INSUFFICIENT_INFO】" in token_buffer:
+                insufficient_flag_detected = True
+                # 触发第四层重试降级回路
+                new_context = await execute_secondary_retry_loop() 
+                async for retry_chunk in call_ollama_with_new_context(new_context):
+                    yield retry_chunk
+                return
+        else:
+            # 正常输出流
+            yield chunk['response']
+            </pre>
+        </section>
+
+        <section class="bg-white p-8 rounded-xl border border-slate-200 mb-8 shadow-xs">
+            <h2 class="text-xl font-bold text-slate-900 font-mono mb-4">四、 生产环境核心组件配置清单 / Production Parameters</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-xs spec-table">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 font-mono text-slate-700">
+                            <th class="w-1/4 font-bold">配置模块 (Module)</th>
+                            <th class="w-1/4 font-bold">推荐工程参数 (Parameters)</th>
+                            <th class="w-2/4 font-bold">控损机制与物理设计考量</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-slate-600">
+                        <tr>
+                            <td class="font-bold text-slate-900">数据分片层 (Slicing)</td>
+                            <td class="font-mono text-indigo-600">child_size: 300字<br>parent_size: 2000字<br>overlap: 45字</td>
+                            <td>微观子块维持小粒度高语义聚焦，最大化降低向量召回阶段的背景噪音。父块采用按物理章节大纲或固定2K字长度切片，承载宏观业务上下文。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900">双网关检索层 (Retrieval)</td>
+                            <td class="font-mono text-indigo-600">vector_top_k: 20 -> 50<br>ce_threshold: >= 0.65<br>elastic_k: 2 ~ 12</td>
+                            <td>Qdrant 基于 HNSW 原生 Payload 级联过滤条件进行第一轮粗筛。Cross-Encoder（交叉编码器）精排模块物理隔离部署。通过分值硬阈值进行弹性自适应过滤，规避固定 K 值导致的信息残缺或噪音倒灌。</td>
+                        </tr>
+                        <tr>
+                            <td class="font-bold text-slate-900">大模型推理层 (LLM Engine)</td>
+                            <td class="font-mono text-indigo-600">num_ctx: 16384 (16K)<br>temperature: 0.1<br>think: false (Disabled)</td>
+                            <td>
+                                锁死推理上下文窗口在 16K 水位，控制单物理并发下 <strong>KV Cache</strong> 显存开销平稳在 ~2.5GB 物理区间。
+                                <br><strong>红线限制：</strong> 必须在后端请求体中显式关闭思考链（<code>think=False</code>）。在基于事实支撑的 RAG 业务场景中，长推理步（Reasoning Tokens）不仅增加首字返回延迟（TTFT），且在大并发环境下因吞吐过长会剧烈挤兑系统 I/O 总线带宽。
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-6 bg-slate-900 text-slate-300 rounded-lg p-5 font-mono text-[11px] leading-relaxed border border-slate-800">
+                <span class="text-amber-500 font-bold">[VRAM_BOUNDARIES_WARNING]</span><br>
+                由于多防线自适应系统允许将检索块动态扩展至最大 12 个长文本父块，系统并发时的单请求 KV Cache 显存开销具有突发阶跃特征。系统初始化阶段必须在 FastAPI 拦截层强制注册动态资源计数器（Semaphore 信号量机制），遵循以下公式实施整卡物理熔断防护：<br>
+                <span class="block bg-slate-950 p-2 rounded text-center my-2 text-indigo-400 border border-slate-800 font-bold">
+                    Max_Allowed_Concurrency = (Total_Physical_VRAM - Model_Static_Weights_Size) / (Max_Elastic_Token_Window_Size [12xParent_Blocks ~4.8GB])
+                </span>
+                当线上总激活 Token 空间触及总显存可用容积的 85% 警戒线时，第四层防线自动激活截断补偿（Force Token Clipping），强行把弹性滑窗上限压回 4 个标准块，以牺牲极个别宏观长文本提问的全面性为代价，换取全集群服务的连续可用性。
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-slate-200 text-center py-6 text-[11px] text-slate-500 border-t border-slate-300 mt-12 font-mono">
+        <p>REPORT_ID: 2026_ENTERPRISE_RAG_SPEC_V2 // SECURITY_LEVEL: INTERNAL_REVIEW</p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.run();
+        });
+    </script>
+</body>
+</html>

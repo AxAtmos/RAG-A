@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: rag-pipelines
+    ports:
+      - "9099:9099"
+    volumes:
+      - ./pipelines:/app/pipelines
+    environment:
+      - PIPELINES_DIR=/app/pipelines
+    restart: unless-stopped
